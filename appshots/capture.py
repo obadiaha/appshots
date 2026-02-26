@@ -130,7 +130,18 @@ class AppShotsCapture:
         self.run_cmd(["xcrun", "simctl", "shutdown", udid], check=False)
 
     def set_defaults(self, udid: str, defaults: dict):
-        """Write UserDefaults for the app."""
+        """Write UserDefaults for the app.
+        
+        Supports types:
+        - bool: true/false
+        - int: integer values
+        - float: decimal values
+        - date: ISO 8601 strings ending in T or Z (written as -date type)
+        - string: everything else
+        
+        To write a Date type (for Swift's `as? Date` cast), use ISO 8601 format:
+          lastSplashDate: "2026-02-26T12:00:00Z"
+        """
         bundle_id = self.app["bundle_id"]
         for key, value in defaults.items():
             if isinstance(value, bool):
@@ -149,6 +160,12 @@ class AppShotsCapture:
                     "xcrun", "simctl", "spawn", udid,
                     "defaults", "write", bundle_id, key, "-float", str(value)
                 ])
+            elif isinstance(value, str) and ("T" in value and ("Z" in value or "+" in value)):
+                # ISO 8601 date string - write as -date type for Swift Date compatibility
+                self.run_cmd([
+                    "xcrun", "simctl", "spawn", udid,
+                    "defaults", "write", bundle_id, key, "-date", str(value)
+                ])
             else:
                 self.run_cmd([
                     "xcrun", "simctl", "spawn", udid,
@@ -162,6 +179,41 @@ class AppShotsCapture:
             "xcrun", "simctl", "spawn", udid,
             "defaults", "delete", bundle_id
         ], check=False)
+
+    def copy_files(self, udid: str, files: list):
+        """Copy files into the app's Documents container on the simulator.
+        
+        Each file entry: {"src": "/path/to/file", "dest": "Documents/file.json"}
+        dest is relative to the app container.
+        """
+        if not files:
+            return
+        
+        bundle_id = self.app["bundle_id"]
+        
+        # Get the app container path
+        result = self.run_cmd([
+            "xcrun", "simctl", "get_app_container", udid, bundle_id, "data"
+        ], check=False)
+        
+        if result.returncode != 0:
+            # App not installed yet or container not available
+            self.debug(f"Cannot get app container - app may not be installed yet")
+            return
+        
+        container = result.stdout.strip()
+        
+        for f in files:
+            src = os.path.expanduser(f["src"])
+            dest_rel = f.get("dest", os.path.basename(src))
+            dest = os.path.join(container, dest_rel)
+            
+            # Create dest directory
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            
+            import shutil
+            shutil.copy2(src, dest)
+            self.debug(f"Copied {src} → {dest}")
 
     def launch_app(self, udid: str, launch_args: list = None, env: dict = None):
         """Launch the app with optional arguments and environment."""
@@ -250,6 +302,10 @@ class AppShotsCapture:
                 # Set defaults for this screen
                 if "defaults" in screen:
                     self.set_defaults(udid, screen["defaults"])
+                
+                # Copy files if specified
+                if "files" in screen:
+                    self.copy_files(udid, screen["files"])
                 
                 # Launch with args
                 launch_args = screen.get("launch_args", [])
