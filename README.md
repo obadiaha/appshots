@@ -68,11 +68,27 @@ screens:
     defaults:
       hasCompletedOnboarding: true
       isProtecting: true
+      lastSplashDate: "2026-02-26T12:00:00Z"  # ISO 8601 → written as Date type
 ```
 
 AppShots runs `defaults write <bundle-id> <key> <value>` before each launch.
 
-### 3. Environment Variables
+**Date type support:** If a string value contains `T` and `Z` (ISO 8601 format), AppShots writes it as a `-date` type so Swift's `as? Date` cast succeeds. Plain strings like `"2026-02-26"` are written as strings.
+
+### 3. File Injection
+Copy data files into the simulator's app container before launch:
+
+```yaml
+screens:
+  - name: "quiz-view"
+    files:
+      - src: "~/path/to/questions.json"
+        dest: "Documents/questions.json"
+```
+
+AppShots copies files into the app's data container (`get_app_container ... data`) before each launch.
+
+### 4. Environment Variables
 Pass data via environment variables:
 
 ```yaml
