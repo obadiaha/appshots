@@ -67,9 +67,9 @@ devices:
 # AI-detected screens (review and adjust)
 {screens_yaml}
 
-# Marketing text overlays
+# Marketing text overlays (off by default - add your own captions per screen)
 overlays:
-  enabled: true
+  enabled: false
   font: "Arial Bold"
   font_size: 72
   text_color: "#FFFFFF"
