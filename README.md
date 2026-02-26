@@ -205,7 +205,7 @@ appshots validate  # Check screenshots meet App Store requirements
 
 ## How We Built This
 
-AppShots was born from building [Harden](https://github.com/obadiaha/harden), a cybersecurity study app. We needed screenshots for TikTok marketing and App Store submission, and discovered that `xcrun simctl` has no tap or swipe commands. 
+AppShots was born from building a cybersecurity study app. We needed screenshots for TikTok marketing and App Store submission, and discovered that `xcrun simctl` has no tap or swipe commands. 
 
 Instead of fighting the simulator's UI, we built a system that:
 1. Injects launch arguments to navigate directly to any screen
