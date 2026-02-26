@@ -200,7 +200,7 @@ class AIAnalyzer:
         
         data = json.dumps({
             "model": "claude-sonnet-4-20250514",
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "system": system,
             "messages": [{"role": "user", "content": user}]
         }).encode()
@@ -229,7 +229,7 @@ class AIAnalyzer:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "max_tokens": 4096,
+            "max_tokens": 8192,
         }).encode()
 
         req = urllib.request.Request(
@@ -252,15 +252,34 @@ class AIAnalyzer:
         data = json.dumps({
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"parts": [{"text": user}]}],
-            "generationConfig": {"maxOutputTokens": 4096},
+            "generationConfig": {"maxOutputTokens": 8192},
         }).encode()
 
         req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.api_key}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={self.api_key}",
             data=data,
             headers={"Content-Type": "application/json"}
         )
 
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=180) as resp:
             result = json.loads(resp.read())
-            return result["candidates"][0]["content"]["parts"][0]["text"]
+            try:
+                return result["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError) as e:
+                # Debug: print the actual response structure
+                import sys
+                print(f"\n⚠️  Unexpected Gemini response structure:", file=sys.stderr)
+                # Check for blocked content
+                if "candidates" in result and result["candidates"]:
+                    cand = result["candidates"][0]
+                    if "finishReason" in cand:
+                        print(f"  Finish reason: {cand['finishReason']}", file=sys.stderr)
+                    if "content" in cand:
+                        print(f"  Content keys: {list(cand['content'].keys())}", file=sys.stderr)
+                    else:
+                        print(f"  Candidate keys: {list(cand.keys())}", file=sys.stderr)
+                elif "error" in result:
+                    print(f"  Error: {result['error']}", file=sys.stderr)
+                else:
+                    print(f"  Top-level keys: {list(result.keys())}", file=sys.stderr)
+                raise RuntimeError(f"Failed to parse Gemini response: {e}")
