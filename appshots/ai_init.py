@@ -85,6 +85,9 @@ output:
   organize_by: "device"
 """
 
+    # Post-process: fix common AI mistakes
+    config = _fix_config(config)
+
     with open(output_path, "w") as f:
         f.write(config)
 
@@ -106,6 +109,28 @@ output:
         print(f"   Review and add to your app, then run: appshots capture")
     else:
         print(f"   Review the config, then run: appshots capture")
+
+
+def _fix_config(config: str) -> str:
+    """Auto-fix common AI mistakes in generated configs."""
+    import re
+    
+    # Fix Unix timestamps in defaults (e.g., ExamDate: 1770287400)
+    def replace_unix_ts(m):
+        key = m.group(1)
+        ts = float(m.group(2))
+        # Convert to ISO 8601 
+        import datetime
+        dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+        return f'{key}: "{dt.strftime("%Y-%m-%dT%H:%M:%SZ")}"  # converted from unix timestamp'
+    
+    config = re.sub(
+        r'(\s+\w+):\s+(1[0-9]{9}(?:\.[0-9]+)?)',
+        lambda m: replace_unix_ts(m) if float(m.group(2)) > 1000000000 else m.group(0),
+        config
+    )
+    
+    return config
 
 
 def _get_project_metadata(project: Path):

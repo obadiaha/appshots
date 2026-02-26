@@ -30,11 +30,14 @@ Your job: identify every distinct screen/view the user can see, and for each one
 IMPORTANT RULES:
 - Look for TabView tabs, NavigationStack destinations, .sheet modifiers, .fullScreenCover, alerts
 - Identify @State, @AppStorage, @Binding variables that control navigation
-- Check for CommandLine.arguments parsing (existing launch arg support)
+- **CRITICAL: Check for CommandLine.arguments parsing (existing launch arg support).** If the app already reads launch arguments (e.g., `-tab=lock`, `-showQuiz`, etc.), USE THEM in launch_args for each screen. This is the primary navigation mechanism.
 - Check for UserDefaults reads that gate screens (onboarding, splash, etc.)
 - Check for file loads from Documents directory or app bundle
 - If the app has a splash screen, include how to skip it via UserDefaults
-- Dates stored via UserDefaults.standard.set(Date(), forKey:) need ISO 8601 format with T and Z
+- **ALL dates MUST use ISO 8601 string format** (e.g., "2026-06-01T00:00:00Z"). NEVER use Unix timestamps (integers/floats like 1770287400). Swift's UserDefaults.standard.object(forKey:) as? Date requires the `-date` flag format.
+- **App group UserDefaults (suiteName: "group.xxx")** cannot be nested as YAML dicts. Use flat keys with a comment, e.g.: `lastUnlockDate: "2026-01-01T12:00:00Z"  # app group key`
+- **Include EVERY distinct visual state**, not just navigation destinations. If a view looks different with data vs empty, include both states.
+- **Only use launch args that ALREADY exist in CommandLine.arguments parsing code.** Mark new/suggested args with a comment `# suggested - add to app`.
 
 Output ONLY valid YAML for the screens section of appshots.yaml. No explanation, no markdown fences.
 Format:
@@ -200,7 +203,7 @@ class AIAnalyzer:
         
         data = json.dumps({
             "model": "claude-sonnet-4-20250514",
-            "max_tokens": 8192,
+            "max_tokens": 16384,
             "system": system,
             "messages": [{"role": "user", "content": user}]
         }).encode()
@@ -229,7 +232,7 @@ class AIAnalyzer:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "max_tokens": 8192,
+            "max_tokens": 16384,
         }).encode()
 
         req = urllib.request.Request(
@@ -252,11 +255,11 @@ class AIAnalyzer:
         data = json.dumps({
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"parts": [{"text": user}]}],
-            "generationConfig": {"maxOutputTokens": 8192},
+            "generationConfig": {"maxOutputTokens": 65536},
         }).encode()
 
         req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={self.api_key}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.api_key}",
             data=data,
             headers={"Content-Type": "application/json"}
         )

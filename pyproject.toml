@@ -7,7 +7,7 @@ name = "appshots"
 version = "0.1.0"
 description = "Automated App Store screenshot generation for iOS developers"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.9"
 authors = [
     {name = "Go Digital", email = "hello@godigitalapps.com"},
@@ -16,7 +16,6 @@ keywords = ["ios", "screenshots", "app-store", "xcode", "simulator", "automation
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Testing",
@@ -29,6 +28,9 @@ dependencies = [
 
 [project.scripts]
 appshots = "appshots.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["appshots*"]
 
 [project.urls]
 Homepage = "https://github.com/obadiaha/appshots"
