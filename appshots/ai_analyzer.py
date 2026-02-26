@@ -40,21 +40,54 @@ IMPORTANT RULES:
 - **Only use launch args that ALREADY exist in CommandLine.arguments parsing code.** Mark new/suggested args with a comment `# suggested - add to app`.
 
 Output ONLY valid YAML for the screens section of appshots.yaml. No explanation, no markdown fences.
+
+EVERY screen MUST include a `navigation` key with XCUITest tap steps to reach it.
+This is what makes AppShots work on ANY app without code modification.
+
+The navigation steps use XCUITest element queries:
+  - tap_tab: "TabName"           # Tap a tab bar button
+  - tap: "ButtonLabel"           # Tap a button (falls back to staticText)
+  - tap_text: "Some Text"        # Tap a static text element
+  - tap_cell: "CellLabel"        # Tap a table/collection view cell
+  - tap_nav: "BackButton"        # Tap a navigation bar button
+  - tap_switch: "SwitchLabel"    # Toggle a switch
+  - tap_id: "accessibilityID"    # Tap by accessibility identifier
+  - swipe: "up"                  # Swipe direction (up/down/left/right)
+  - scroll_to: "ElementLabel"    # Scroll until element visible, then tap
+  - type_text: "hello"           # Type into focused text field
+  - wait: 2                      # Wait N seconds
+  - alert_accept: true           # Accept an alert dialog
+  - alert_dismiss: true          # Dismiss an alert dialog
+  - back: true                   # Tap the back button in nav bar
+
+For the FIRST screen (splash/launch), use an empty navigation: []
+
 Format:
 
 screens:
   - name: "01-screen-name"
-    launch_args: ["-argName=value"]
+    navigation: []
     defaults:
       key: value
-    files:
-      - src: "NEEDS_USER_INPUT"
-        dest: "Documents/filename.json"
     caption: "Marketing text for this screen"
     wait_seconds: 3
   
-  - name: "02-next-screen"
-    ...
+  - name: "02-tab-screen"
+    navigation:
+      - tap_tab: "Settings"
+    caption: "Customize your experience"
+    wait_seconds: 2
+
+  - name: "03-deep-screen"
+    navigation:
+      - tap_tab: "Home"
+      - tap: "Start Session"
+      - wait: 1
+    caption: "Begin your session"
+    wait_seconds: 2
+
+If the app ALSO has existing launch argument support (CommandLine.arguments parsing),
+include launch_args as a SECONDARY method alongside navigation.
 
 For files that need user input (like question banks), set src to "NEEDS_USER_INPUT" with a comment.
 For dates, use ISO 8601: "2026-01-01T12:00:00Z"

@@ -254,7 +254,7 @@ class AppShotsCapture:
             return str(self.output_dir / screen_name / f"{device_name}.{fmt}")
 
     def run(self, device_filter=None, screen_filter=None, skip_overlay=False, skip_build=False):
-        """Main capture flow."""
+        """Main capture flow — supports both launch_args and navigation-based screens."""
         self.log("📸 AppShots — Automated App Store Screenshot Generation")
         self.log("=" * 55)
         
@@ -270,14 +270,21 @@ class AppShotsCapture:
             self.app_path = str(apps[0])
             self.log(f"♻️  Using existing build: {self.app_path}")
         
-        # Step 2: Process each device
-        devices = self.devices
-        if device_filter:
-            devices = [d for d in devices if device_filter.lower() in d["name"].lower()]
-        
+        # Step 2: Split screens into launch_args vs navigation
         screens = self.screens
         if screen_filter:
             screens = [s for s in screens if screen_filter.lower() in s["name"].lower()]
+        
+        launch_arg_screens = [s for s in screens if "navigation" not in s]
+        nav_screens = [s for s in screens if "navigation" in s]
+        
+        if nav_screens:
+            self.log(f"\n  📋 {len(launch_arg_screens)} screens via launch args, {len(nav_screens)} via UI navigation")
+        
+        # Step 3: Process each device
+        devices = self.devices
+        if device_filter:
+            devices = [d for d in devices if device_filter.lower() in d["name"].lower()]
         
         total = len(devices) * len(screens)
         count = 0
@@ -292,34 +299,51 @@ class AppShotsCapture:
             self.run_cmd(["xcrun", "simctl", "install", udid, self.app_path])
             self.debug("App installed")
             
-            for screen in screens:
+            # ── Phase A: Launch-arg based screens (original method) ──
+            for screen in launch_arg_screens:
                 count += 1
-                self.log(f"  [{count}/{total}] {screen['name']}")
+                self.log(f"  [{count}/{total}] {screen['name']} (launch args)")
                 
-                # Clear previous state
                 self.clear_defaults(udid)
-                
-                # Set defaults for this screen
                 if "defaults" in screen:
                     self.set_defaults(udid, screen["defaults"])
-                
-                # Copy files if specified
                 if "files" in screen:
                     self.copy_files(udid, screen["files"])
                 
-                # Launch with args
                 launch_args = screen.get("launch_args", [])
                 env = screen.get("env", {})
                 self.launch_app(udid, launch_args, env)
                 
-                # Wait for screen to settle
                 wait = screen.get("wait_seconds", 2)
                 time.sleep(wait)
                 
-                # Screenshot
                 output_path = self.get_output_path(device["name"], screen["name"])
                 self.take_screenshot(udid, output_path)
                 self.log(f"    ✅ {output_path}")
+            
+            # ── Phase B: Navigation-based screens (XCUITest) ──
+            if nav_screens:
+                self.log(f"\n  🧪 Switching to XCUITest navigation for {len(nav_screens)} screens...")
+                from .xctest_capture import XCTestCapture
+                
+                xctest = XCTestCapture(self.config, verbose=self.verbose)
+                try:
+                    output_dir = str(self.output_dir)
+                    captured = xctest.capture_all(
+                        screens=nav_screens,
+                        device_udid=udid,
+                        output_dir=output_dir,
+                        device_name=device["name"],
+                    )
+                    count += len(nav_screens)
+                except Exception as e:
+                    self.log(f"  ⚠️  XCUITest capture failed: {e}")
+                    self.log(f"  💡 Falling back to launch args for remaining screens")
+                    for screen in nav_screens:
+                        count += 1
+                        self.log(f"  [{count}/{total}] {screen['name']} (fallback — needs launch args)")
+                finally:
+                    xctest.cleanup()
             
             # Shutdown device after all screens
             self.shutdown_device(udid)
