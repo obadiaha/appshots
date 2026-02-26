@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Output
+screenshots/
+*.yaml
+!appshots.yaml.example
+
+# OS
+.DS_Store
+Thumbs.db

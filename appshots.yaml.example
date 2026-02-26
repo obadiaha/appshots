@@ -1,0 +1,83 @@
+# AppShots Configuration — Harden App Example
+# Copy this to appshots.yaml and customize for your app
+
+app:
+  project: ~/Desktop/StudyLock/StudyLock/Harden.xcodeproj
+  scheme: Harden
+  bundle_id: godigital.Harden
+
+runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-1
+
+devices:
+  - name: "iPhone 16 Pro Max"
+    type: "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max"
+  - name: "iPhone 16 Pro"
+    type: "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
+  - name: "iPhone SE (3rd generation)"
+    type: "com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation"
+
+screens:
+  - name: "01-splash"
+    launch_args: []
+    defaults:
+      hasCompletedOnboarding: false
+      lastSplashDate: "1970-01-01"
+    caption: ""
+    wait_seconds: 2
+
+  - name: "02-onboarding"
+    launch_args: []
+    defaults:
+      hasCompletedOnboarding: false
+    caption: "Get started in seconds"
+    wait_seconds: 3
+
+  - name: "03-home-lock"
+    launch_args: ["-tab=lock"]
+    defaults:
+      hasCompletedOnboarding: true
+    caption: "Lock distracting apps"
+    wait_seconds: 2
+
+  - name: "04-progress"
+    launch_args: ["-tab=progress"]
+    defaults:
+      hasCompletedOnboarding: true
+    caption: "Track your study progress"
+    wait_seconds: 2
+
+  - name: "05-settings"
+    launch_args: ["-tab=settings"]
+    defaults:
+      hasCompletedOnboarding: true
+    caption: "Customize your experience"
+    wait_seconds: 2
+
+  - name: "06-quiz"
+    launch_args: ["-showQuiz"]
+    defaults:
+      hasCompletedOnboarding: true
+    caption: "Answer to unlock"
+    wait_seconds: 2
+
+  - name: "07-shield"
+    launch_args: ["-showMockShield"]
+    defaults:
+      hasCompletedOnboarding: true
+    caption: "Apps stay locked"
+    wait_seconds: 2
+
+overlays:
+  enabled: true
+  font: "Arial Bold"
+  font_size: 72
+  text_color: "#FFFFFF"
+  outline_color: "#000000"
+  outline_width: 4
+  position: "top"
+  gradient_overlay: true
+
+output:
+  directory: "./screenshots"
+  format: "png"
+  organize_by: "device"

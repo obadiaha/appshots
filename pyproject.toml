@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appshots"
+version = "0.1.0"
+description = "Automated App Store screenshot generation for iOS developers"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Go Digital", email = "hello@godigitalapps.com"},
+]
+keywords = ["ios", "screenshots", "app-store", "xcode", "simulator", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Multimedia :: Graphics :: Capture :: Screen Capture",
+]
+dependencies = [
+    "Pillow>=10.0",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+appshots = "appshots.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/obadiaha/appshots"
+Documentation = "https://github.com/obadiaha/appshots#readme"
+Repository = "https://github.com/obadiaha/appshots"
+Issues = "https://github.com/obadiaha/appshots/issues"
