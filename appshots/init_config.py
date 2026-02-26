@@ -33,7 +33,9 @@ def generate_config(project_path: str, output_path: str):
             info = json.loads(result.stdout)
             schemes = info.get("project", {}).get("schemes", [])
             if schemes:
-                scheme = schemes[0]
+                # Prefer main app scheme, skip extensions/widgets
+                main_schemes = [s for s in schemes if "Extension" not in s and "Widget" not in s]
+                scheme = main_schemes[0] if main_schemes else schemes[0]
                 print(f"  Found scheme: {scheme}")
         except json.JSONDecodeError:
             pass

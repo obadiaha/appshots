@@ -32,11 +32,13 @@ cd appshots
 # Install (Python 3.9+, Xcode required)
 pip install -e .
 
-# Generate config from your Xcode project
-appshots init --project /path/to/YourApp.xcodeproj
+# Option A: AI-powered config (recommended) — BYOKeys
+export ANTHROPIC_API_KEY="sk-..."  # or OPENAI_API_KEY or GEMINI_API_KEY
+appshots init --project /path/to/YourApp.xcodeproj --ai
 
-# Edit the config to define your screens
-nano appshots.yaml
+# Option B: Manual config generation
+appshots init --project /path/to/YourApp.xcodeproj
+nano appshots.yaml  # Edit screens manually
 
 # Run
 appshots capture
@@ -188,13 +190,40 @@ appshots resize --input ./my-screenshots/ --sizes all
 ## CLI Reference
 
 ```bash
-appshots init      # Generate config from Xcode project
-appshots capture   # Full capture: build → boot → screenshot → overlay
-appshots overlay   # Add text overlays to existing screenshots  
-appshots resize    # Resize screenshots to all App Store sizes
-appshots clean     # Delete created simulators and temp files
-appshots validate  # Check screenshots meet App Store requirements
+appshots init                    # Generate config from Xcode project
+appshots init --ai               # AI-powered screen detection (BYOKeys)
+appshots init --ai --provider gemini --api-key KEY  # Specify provider
+appshots capture                 # Full capture: build → boot → screenshot → overlay
+appshots capture --no-build      # Skip xcodebuild (use existing build)
+appshots capture --no-overlay    # Raw screenshots without text
+appshots overlay --input ./dir   # Add text overlays to existing screenshots  
+appshots resize --input ./dir    # Resize screenshots to all App Store sizes
+appshots clean                   # Delete created simulators and temp files
+appshots validate --input ./dir  # Check screenshots meet App Store requirements
 ```
+
+## AI-Powered Screen Detection (BYOKeys)
+
+AppShots can analyze your Swift codebase using AI to auto-detect every screen:
+
+```bash
+# Set your API key (supports Anthropic, OpenAI, or Gemini)
+export ANTHROPIC_API_KEY="sk-ant-..."   # Best results
+# OR: export OPENAI_API_KEY="sk-..."
+# OR: export GEMINI_API_KEY="AIza..."
+
+appshots init --project YourApp.xcodeproj --ai
+```
+
+The AI analyzer:
+1. Reads all .swift files in your project
+2. Identifies TabView tabs, NavigationStack destinations, sheets, covers
+3. Maps @State/@AppStorage variables that control navigation
+4. Detects data file dependencies (Documents directory loads)
+5. Generates complete `appshots.yaml` with launch args, defaults, and file configs
+6. Optionally generates Swift code to add launch argument support (`--ai` flag)
+
+**Your keys stay local.** AppShots calls the API directly from your machine. No intermediary servers.
 
 ## Requirements
 

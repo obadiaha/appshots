@@ -21,6 +21,10 @@ def main():
     init_parser = subparsers.add_parser("init", help="Generate config from Xcode project")
     init_parser.add_argument("--project", "-p", required=True, help="Path to .xcodeproj")
     init_parser.add_argument("--output", "-o", default="appshots.yaml", help="Config output path")
+    init_parser.add_argument("--ai", action="store_true", help="Use AI to analyze codebase and auto-detect screens")
+    init_parser.add_argument("--provider", choices=["anthropic", "openai", "gemini"], help="AI provider (auto-detected from env vars)")
+    init_parser.add_argument("--api-key", help="API key (or set ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY)")
+    init_parser.add_argument("--no-swift", action="store_true", help="Skip generating Swift code modifications")
 
     # capture
     capture_parser = subparsers.add_parser("capture", help="Build, boot, screenshot, overlay")
@@ -59,8 +63,17 @@ def main():
         sys.exit(1)
 
     if args.command == "init":
-        from .init_config import generate_config
-        generate_config(args.project, args.output)
+        if getattr(args, "ai", False):
+            from .ai_init import ai_generate_config
+            ai_generate_config(
+                args.project, args.output,
+                provider=getattr(args, "provider", None),
+                api_key=getattr(args, "api_key", None),
+                generate_swift=not getattr(args, "no_swift", False),
+            )
+        else:
+            from .init_config import generate_config
+            generate_config(args.project, args.output)
 
     elif args.command == "capture":
         engine = AppShotsCapture(args.config, verbose=getattr(args, "verbose", False))
