@@ -156,14 +156,28 @@ def _get_project_metadata(project: Path):
             pass
 
     # Try to find bundle ID
-    pbxproj = project / "project.pbxproj"
+    # Check if project IS a .xcodeproj, or find one inside the directory
+    if project.suffix == ".xcodeproj":
+        pbxproj = project / "project.pbxproj"
+    else:
+        pbxproj = project / "project.pbxproj"
+        if not pbxproj.exists():
+            # Look for .xcodeproj inside the directory
+            xcodeprojs = list(project.glob("*.xcodeproj"))
+            if xcodeprojs:
+                pbxproj = xcodeprojs[0] / "project.pbxproj"
     if pbxproj.exists():
         content = pbxproj.read_text()
-        match = re.search(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?([^";]+)"?', content)
-        if match:
-            bid = match.group(1)
-            if "$(" not in bid:
-                bundle_id = bid
+        # Find bundle IDs, prefer ones that aren't test/widget targets
+        all_bids = re.findall(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?([^";]+)"?', content)
+        # Filter out variable references, test targets, widget targets
+        real_bids = [b for b in all_bids if "$(" not in b 
+                     and "Tests" not in b and "UITests" not in b 
+                     and "Widget" not in b and "Extension" not in b]
+        if real_bids:
+            bundle_id = real_bids[0]
+        elif all_bids and "$(" not in all_bids[0]:
+            bundle_id = all_bids[0]
 
     # Find runtime
     result = subprocess.run(
