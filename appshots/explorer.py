@@ -366,6 +366,83 @@ final class ExplorerTests: XCTestCase {{
             }}
         }}
         
+        // Try tapping static texts (many apps use tappable text labels)
+        var textLabels: [(Int, String)] = []
+        for i in 0..<min(app.staticTexts.count, {max_actions}) {{
+            let txt = app.staticTexts.element(boundBy: i)
+            if txt.exists && txt.isHittable && !txt.label.isEmpty {{
+                let label = txt.label
+                // Only tap texts that look like buttons/links
+                let actionWords = ["skip", "tap", "continue", "next", "start", "begin",
+                                   "get started", "sign", "log in", "try", "go", "done",
+                                   "upgrade", "subscribe", "unlock", "dismiss", "learn more",
+                                   "see all", "view", "show", "open", "select", "choose"]
+                let lower = label.lowercased()
+                let looksClickable = actionWords.contains(where: {{ lower.contains($0) }})
+                    || label.count < 25  // Short text is often a button/link
+                if looksClickable {{
+                    textLabels.append((i, label))
+                }}
+            }}
+        }}
+        
+        for (idx, label) in textLabels {{
+            guard screenCount < maxScreens else {{ return }}
+            
+            let txt = app.staticTexts.element(boundBy: idx)
+            guard txt.exists && txt.isHittable else {{ continue }}
+            
+            txt.tap()
+            sleep(2)
+            
+            let hashAfter = screenHash(app)
+            if hashAfter != hashBefore {{
+                let safeName = label
+                    .replacingOccurrences(of: " ", with: "-")
+                    .replacingOccurrences(of: "/", with: "-")
+                    .prefix(30)
+                let _ = recordScreenIfNew(app, context: "text-\\(safeName)")
+                
+                exploreCurrentScreen(app, depth: depth + 1, maxDepth: maxDepth)
+                
+                tryGoBack(app)
+                sleep(1)
+                if screenHash(app) != hashBefore {{
+                    app.terminate()
+                    app.launch()
+                    sleep(2)
+                }}
+            }}
+        }}
+
+        // Try tapping tab bar buttons
+        for i in 0..<min(app.tabBars.buttons.count, 10) {{
+            guard screenCount < maxScreens else {{ return }}
+            
+            let tab = app.tabBars.buttons.element(boundBy: i)
+            guard tab.exists && tab.isHittable else {{ continue }}
+            
+            let label = tab.label
+            tab.tap()
+            sleep(2)
+            
+            let hashAfter = screenHash(app)
+            if hashAfter != hashBefore {{
+                let safeName = label
+                    .replacingOccurrences(of: " ", with: "-")
+                    .prefix(30)
+                let _ = recordScreenIfNew(app, context: "tab-\\(safeName)")
+                exploreCurrentScreen(app, depth: depth + 1, maxDepth: maxDepth)
+                tryGoBack(app)
+                sleep(1)
+                if screenHash(app) != hashBefore {{
+                    app.terminate()
+                    app.launch()
+                    sleep(2)
+                }}
+            }}
+        }}
+
         // Try tapping cells
         for i in 0..<min(app.cells.count, 10) {{
             guard screenCount < maxScreens else {{ return }}
@@ -390,6 +467,15 @@ final class ExplorerTests: XCTestCase {{
                     sleep(2)
                 }}
             }}
+        }}
+
+        // Try tapping the screen itself (dismisses splashes, modals)
+        let centerCoord = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        centerCoord.tap()
+        sleep(1)
+        if screenHash(app) != hashBefore {{
+            let _ = recordScreenIfNew(app, context: "screen-tap")
+            exploreCurrentScreen(app, depth: depth + 1, maxDepth: maxDepth)
         }}
     }}
 }}
@@ -426,7 +512,9 @@ final class ExplorerTests: XCTestCase {{
         xctestrun = xctestrun_files[0]
 
         self.log("  🔍 Exploring app UI...")
-        results_path = self.runner_dir / "ExploreResults.xcresult"
+        # Use unique results path per run to avoid conflicts
+        self._run_counter = getattr(self, '_run_counter', 0) + 1
+        results_path = self.runner_dir / f"ExploreResults-{self._run_counter}.xcresult"
         cmd = [
             "xcodebuild", "test-without-building",
             "-xctestrun", str(xctestrun),
