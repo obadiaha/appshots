@@ -20,6 +20,9 @@ hybrid-screenshots/
 *.yaml
 !appshots.yaml.example
 
+# Generated artifacts
+appshots-swift-mods.swift
+
 # OS
 .DS_Store
 Thumbs.db
