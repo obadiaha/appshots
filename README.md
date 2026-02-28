@@ -1,176 +1,294 @@
 # AppShots 📸
 
-**Automated App Store screenshot generation for iOS developers.**
+**One command. Every screen. Zero code changes.**
 
-Stop manually screenshotting 6 devices × 10 screens = 60 screenshots every release. AppShots automates the entire process.
+AppShots automatically captures every App Store screenshot for your iOS app using AI + XCUITest — no Fastlane, no Ruby, no code modifications required.
 
-## What It Does
-
-1. **Boots iOS Simulators** for every required device size
-2. **Navigates your app** to each screen using launch arguments
-3. **Takes pixel-perfect screenshots** at every App Store Connect resolution
-4. **Adds marketing overlays** (optional: text captions + device frames)
-5. **Outputs organized folders** ready for App Store Connect upload
-
-## Why AppShots?
-
-| Problem | AppShots Solution |
-|---------|-------------------|
-| `xcrun simctl` has no tap/swipe | Launch arguments + UserDefaults injection |
-| 60+ screenshots per release | One command, all devices, all screens |
-| Manual text overlays in Figma | Built-in PIL-based text overlay engine |
-| Different resolutions per device | Auto-handles all App Store sizes |
-| fastlane snapshot needs Ruby + complex config | Zero dependencies beyond Xcode + Python 3 |
+---
 
 ## Quick Start
 
 ```bash
-# Clone
-git clone https://github.com/obadiaha/appshots.git
-cd appshots
+pip install appshots
 
-# Install (Python 3.9+, Xcode required)
-pip install -e .
+# Set an AI key (Gemini has a free tier)
+export GEMINI_API_KEY="AIza..."
 
-# Option A: AI-powered config (recommended) — BYOKeys
-export ANTHROPIC_API_KEY="sk-..."  # or OPENAI_API_KEY or GEMINI_API_KEY
-appshots init --project /path/to/YourApp.xcodeproj --ai
-
-# Option B: Manual config generation
-appshots init --project /path/to/YourApp.xcodeproj
-nano appshots.yaml  # Edit screens manually
-
-# Run
-appshots capture
+appshots auto --project ~/MyApp/MyApp.xcodeproj --bundle-id com.example.myapp
 ```
+
+Screenshots land in `./screenshots/iPhone 16 Pro Max/`. Done.
+
+---
 
 ## How It Works
 
-AppShots uses three techniques to navigate your app without UI interaction:
+AppShots runs a 5-step pipeline entirely on your machine:
 
-### 1. Launch Arguments (Primary)
-Define screens via launch arguments your app responds to:
-
-```swift
-// In your app's ContentView or App struct:
-if CommandLine.arguments.contains("-screen=settings") {
-    selectedTab = .settings
-}
-if CommandLine.arguments.contains("-showQuiz") {
-    showQuiz = true
-}
+```
+1. 🔨 Build   → xcodebuild compiles your app for the simulator
+2. 🧠 Analyze → AI reads your Swift source (+ storyboards) and maps every screen
+3. 🔍 Explore → XCUITest dumps real accessibility trees for each app state
+4. 🗺️  Plan   → AI cross-references screens with real elements → reliable navigation YAML
+5. 📸 Capture → XCUITest navigates to each screen and saves a screenshot
 ```
 
-### 2. UserDefaults Injection
-Set app state before launch:
+No coordinate-based tapping. No brittle selectors. Navigation uses real element labels from the live app.
 
-```yaml
-screens:
-  - name: "main-dashboard"
-    defaults:
-      hasCompletedOnboarding: true
-      isProtecting: true
-      lastSplashDate: "2026-02-26T12:00:00Z"  # ISO 8601 → written as Date type
+---
+
+## Requirements
+
+| Requirement | Version |
+|------------|---------|
+| macOS | 13+ (Ventura or later) |
+| Xcode | 15+ with iOS Simulator |
+| Python | 3.9+ |
+| AI API key | Any one of: Gemini, Claude, or GPT-4o |
+
+---
+
+## Commands Reference
+
+### `appshots auto` — Fully automatic ✨
+
+The main command. AI + accessibility tree = screenshots for any iOS app.
+
+```bash
+appshots auto \
+  --project ~/MyApp/MyApp.xcodeproj \
+  --bundle-id com.example.myapp \
+  --device "iPhone 16 Pro Max" \
+  --output ./screenshots \
+  --save-yaml appshots.yaml      # optional: save the generated config
+
+# Specify AI provider explicitly
+appshots auto --project ... --bundle-id ... \
+  --provider gemini --api-key AIza...
 ```
 
-AppShots runs `defaults write <bundle-id> <key> <value>` before each launch.
+### `appshots init` — Generate config manually
 
-**Date type support:** If a string value contains `T` and `Z` (ISO 8601 format), AppShots writes it as a `-date` type so Swift's `as? Date` cast succeeds. Plain strings like `"2026-02-26"` are written as strings.
+Generates `appshots.yaml` from your project. Use `--ai` for AI-powered screen detection.
 
-### 3. File Injection
-Copy data files into the simulator's app container before launch:
-
-```yaml
-screens:
-  - name: "quiz-view"
-    files:
-      - src: "~/path/to/questions.json"
-        dest: "Documents/questions.json"
+```bash
+appshots init --project ~/MyApp/MyApp.xcodeproj --ai
+appshots init --project ~/MyApp/MyApp.xcodeproj      # manual (no AI)
 ```
 
-AppShots copies files into the app's data container (`get_app_container ... data`) before each launch.
+### `appshots explore` — UI crawler (no AI needed)
 
-### 4. Environment Variables
-Pass data via environment variables:
+Auto-discovers screens by crawling the UI without any AI or config.
 
-```yaml
-screens:
-  - name: "quiz-view"
-    env:
-      MOCK_QUESTION_INDEX: "5"
-      SHOW_CORRECT_ANSWER: "true"
+```bash
+appshots explore \
+  --project ~/MyApp/MyApp.xcodeproj \
+  --bundle-id com.example.myapp \
+  --depth 3
 ```
+
+### `appshots capture` — Run from existing config
+
+Captures screenshots using an existing `appshots.yaml`.
+
+```bash
+appshots capture --config appshots.yaml
+appshots capture --no-build     # skip xcodebuild (use existing build)
+appshots capture --no-overlay   # raw screenshots, no text
+```
+
+### Other Commands
+
+```bash
+appshots overlay --input ./screenshots   # Add text overlays to existing shots
+appshots resize --input ./screenshots    # Resize to all App Store sizes
+appshots validate --input ./screenshots  # Check dimensions meet App Store rules
+appshots clean                           # Delete temp simulators and build dirs
+```
+
+---
+
+## AI API Key Setup
+
+AppShots calls AI providers directly from your machine. No intermediary servers. Your key never leaves your computer.
+
+**First run:** If no key is found, AppShots prompts you interactively:
+
+```
+⚠️  No API key found. AppShots needs an AI provider to analyze your app.
+
+Choose a provider:
+  1. Google Gemini (recommended, free tier available)
+  2. Anthropic Claude
+  3. OpenAI GPT-4o
+
+Enter choice (1-3): 1
+
+Enter your Google Gemini API key: AIza...
+Save to ~/.appshots/config.json for future runs? [Y/n]: Y
+  ✅ Saved to /Users/you/.appshots/config.json
+```
+
+**Or set via environment variable:**
+
+```bash
+export GEMINI_API_KEY="AIza..."          # Google Gemini (free tier)
+export ANTHROPIC_API_KEY="sk-ant-..."   # Claude (best code analysis)
+export OPENAI_API_KEY="sk-..."          # GPT-4o
+```
+
+**Priority order:** `--api-key` flag → `~/.appshots/config.json` → environment variable → interactive prompt.
+
+### Supported AI Providers
+
+| Provider | Env Variable | Notes |
+|----------|-------------|-------|
+| Google Gemini | `GEMINI_API_KEY` | **Recommended.** Free tier available at [aistudio.google.com](https://aistudio.google.com/apikey) |
+| Anthropic Claude | `ANTHROPIC_API_KEY` | Best code understanding. [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| OpenAI GPT-4o | `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com/api-keys) |
+
+---
+
+## Example Output
+
+Running `appshots auto` on [Potodoro](https://apps.apple.com/app/potodoro/id6737168967) (a pomodoro timer app):
+
+```
+📸 AppShots Hybrid Capture
+═══════════════════════════════════════════════════════
+🔨 Building app...
+  🧹 Cleaning stale build dir...
+  ✅ Built in 34.2s: Potodoro.app
+
+🧠 Step 1: AI analyzing source code...
+  📐 Collected 2 storyboard/xib files
+  📄 Collected 47 Swift files (98,432 chars)
+  🔄 Sending to gemini...
+  📋 Found 8 screens, 3 UserDefaults states
+
+🔍 Step 2: Dumping real accessibility trees...
+  📱 State 1/3: state0
+    ✅ Tree dumped (4,821 chars)
+  📱 State 2/3: hasCompletedOnboarding=True
+    ✅ Tree dumped (6,103 chars)
+
+🧠 Step 3: AI planning navigation from real elements...
+  ✅ Navigation plan generated
+
+📸 Step 4: Capturing screenshots...
+  🎯 Capturing 7 reachable screens...
+    [1/7] 01-launch-splash           ✅ ./screenshots/iPhone 16 Pro Max/01-launch-splash.png
+    [2/7] 08-harvest-ready           ✅ ./screenshots/iPhone 16 Pro Max/08-harvest-ready.png
+    [3/7] 09-harvest-rewards-overlay ✅ ./screenshots/iPhone 16 Pro Max/09-harvest-rewards-overlay.png
+    [4/7] 10-stash-warehouse         ✅ ./screenshots/iPhone 16 Pro Max/10-stash-warehouse.png
+    [5/7] 11-settings-menu          ✅ ./screenshots/iPhone 16 Pro Max/11-settings-menu.png
+    [6/7] 13-pro-paywall             ✅ ./screenshots/iPhone 16 Pro Max/13-pro-paywall.png
+    [7/7] 16-tag-management          ✅ ./screenshots/iPhone 16 Pro Max/16-tag-management.png
+  📸 7/7 screenshots captured
+
+═══════════════════════════════════════════════════════
+⏱️  Total: 4m 23s
+📸 Screenshots: 7
+```
+
+---
 
 ## Configuration (appshots.yaml)
 
+When you need fine-grained control, edit the generated YAML:
+
 ```yaml
-# App info
 app:
-  project: ~/Desktop/MyApp/MyApp.xcodeproj
-  scheme: MyApp              # Xcode scheme to build
+  project: ~/MyApp/MyApp.xcodeproj
+  scheme: MyApp
   bundle_id: com.example.myapp
 
-# Devices to screenshot (maps to App Store Connect requirements)
 devices:
-  - name: "iPhone 16 Pro Max"   # 6.9" display (required)
+  - name: "iPhone 16 Pro Max"
     type: "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max"
-  - name: "iPhone 16 Pro"       # 6.3" display (required)
-    type: "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
-  - name: "iPhone SE"           # 4.7" display (optional)
-    type: "com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation"
-  - name: "iPad Pro 13"         # 12.9" display (if universal)
-    type: "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M4"
 
-# Runtime
-runtime: "com.apple.CoreSimulator.SimRuntime.iOS-26-1"
+runtime: "com.apple.CoreSimulator.SimRuntime.iOS-18-0"
 
-# Screens to capture
 screens:
-  - name: "01-home"
-    launch_args: ["-tab=home"]
-    defaults:
-      hasCompletedOnboarding: true
-    caption: "Your personalized dashboard"
-    wait_seconds: 2
-
-  - name: "02-settings"
-    launch_args: ["-tab=settings"]
-    defaults:
-      hasCompletedOnboarding: true
-    caption: "Customize everything"
-    wait_seconds: 2
-
-  - name: "03-onboarding"
-    launch_args: []
+  - name: "01-onboarding"
+    navigation: []
     defaults:
       hasCompletedOnboarding: false
     caption: "Get started in seconds"
     wait_seconds: 3
 
-# Marketing overlays (optional)
-overlays:
-  enabled: true
-  font: "Arial Bold"
-  font_size: 72
-  text_color: "#FFFFFF"
-  outline_color: "#000000"
-  outline_width: 4
-  position: "top"          # top, bottom, center
-  gradient_overlay: true   # darken behind text for readability
+  - name: "02-dashboard"
+    navigation:
+      - tap_tab: "Home"
+    defaults:
+      hasCompletedOnboarding: true
+    caption: "Your command center"
+    wait_seconds: 2
 
-# Output
-output:
-  directory: "./screenshots"
-  format: "png"
-  organize_by: "device"    # device (device/screen) or screen (screen/device)
+  - name: "03-settings"
+    navigation:
+      - tap_tab: "Settings"
+    defaults:
+      hasCompletedOnboarding: true
+    caption: "Customize everything"
+    wait_seconds: 2
 ```
+
+### Navigation Step Reference
+
+| Step | Example | Description |
+|------|---------|-------------|
+| `tap` | `tap: "Start Session"` | Tap button (falls back to static text) |
+| `tap_tab` | `tap_tab: "Settings"` | Tap tab bar button by exact label |
+| `tap_text` | `tap_text: "Learn More"` | Tap static text element |
+| `tap_cell` | `tap_cell: "Premium Plan"` | Tap table/collection view cell |
+| `tap_nav` | `tap_nav: "Back"` | Tap navigation bar button |
+| `tap_switch` | `tap_switch: "Dark Mode"` | Toggle a switch |
+| `tap_id` | `tap_id: "startButton"` | Tap by accessibility identifier |
+| `swipe` | `swipe: "left"` | Swipe direction (up/down/left/right) |
+| `scroll_to` | `scroll_to: "Privacy Policy"` | Scroll until visible, then tap |
+| `type_text` | `type_text: "hello"` | Type into focused text field |
+| `wait` | `wait: 2` | Wait N seconds |
+| `alert_accept` | `alert_accept: true` | Accept alert dialog |
+| `alert_dismiss` | `alert_dismiss: true` | Dismiss alert dialog |
+| `back` | `back: true` | Tap back button in nav bar |
+
+---
+
+## FAQ
+
+**Does it work with UIKit apps (Storyboards)?**
+Yes. AppShots parses `.storyboard` and `.xib` files to extract view controller names, segue identifiers, and tab bar items. The AI uses this data alongside Swift source to detect UIKit screens. Navigation uses XCUITest, which works with both UIKit and SwiftUI apps.
+
+**Does it support iPad screenshots?**
+Yes. Add iPad devices to your `appshots.yaml`:
+```yaml
+devices:
+  - name: "iPad Pro 13"
+    type: "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M4"
+```
+
+**Can I use multiple devices?**
+Yes. Run `appshots capture` with multiple devices configured in `appshots.yaml`. Or run `appshots auto` separately per device with `--device`.
+
+**What if a screen requires a real device permission (Camera, FaceID, etc.)?**
+The AI marks these screens as `reachable: false` with a reason. Other screens are still captured. If the app has a `#if DEBUG` bypass (e.g., a "Simulate" toggle), AppShots uses it automatically.
+
+**Do I need to modify my app code?**
+No. AppShots navigates entirely via XCUITest (accessibility tree) and UserDefaults injection. Zero code changes required.
+
+**Can I use it in CI?**
+Yes, once `~/.appshots/config.json` is configured (or an env var is set). No interactive prompts in non-TTY environments.
+
+**It found the wrong .app file — what happened?**
+AppShots cleans the build directory before each run and matches the `.app` filename to your scheme name. If you see a mismatch, make sure `--scheme` matches your Xcode scheme exactly.
+
+---
 
 ## App Store Connect Required Sizes
 
-AppShots automatically captures the correct resolution for each device:
-
 | Display Size | Device | Resolution |
-|-------------|--------|------------|
+|------------|--------|------------|
 | 6.9" | iPhone 16 Pro Max | 1320 × 2868 |
 | 6.7" | iPhone 16 Plus | 1290 × 2796 |
 | 6.3" | iPhone 16 Pro | 1206 × 2622 |
@@ -179,73 +297,7 @@ AppShots automatically captures the correct resolution for each device:
 | 13" | iPad Pro (M4) | 2064 × 2752 |
 | 11" | iPad Air (M3) | 2360 × 1640 |
 
-## Resize Mode
-
-Already have screenshots from one device? Resize to all required sizes:
-
-```bash
-appshots resize --input ./my-screenshots/ --sizes all
-```
-
-## CLI Reference
-
-```bash
-appshots init                    # Generate config from Xcode project
-appshots init --ai               # AI-powered screen detection (BYOKeys)
-appshots init --ai --provider gemini --api-key KEY  # Specify provider
-appshots capture                 # Full capture: build → boot → screenshot → overlay
-appshots capture --no-build      # Skip xcodebuild (use existing build)
-appshots capture --no-overlay    # Raw screenshots without text
-appshots overlay --input ./dir   # Add text overlays to existing screenshots  
-appshots resize --input ./dir    # Resize screenshots to all App Store sizes
-appshots clean                   # Delete created simulators and temp files
-appshots validate --input ./dir  # Check screenshots meet App Store requirements
-```
-
-## AI-Powered Screen Detection (BYOKeys)
-
-AppShots can analyze your Swift codebase using AI to auto-detect every screen:
-
-```bash
-# Set your API key (supports Anthropic, OpenAI, or Gemini)
-export ANTHROPIC_API_KEY="sk-ant-..."   # Best results
-# OR: export OPENAI_API_KEY="sk-..."
-# OR: export GEMINI_API_KEY="AIza..."
-
-appshots init --project YourApp.xcodeproj --ai
-```
-
-The AI analyzer:
-1. Reads all .swift files in your project
-2. Identifies TabView tabs, NavigationStack destinations, sheets, covers
-3. Maps @State/@AppStorage variables that control navigation
-4. Detects data file dependencies (Documents directory loads)
-5. Generates complete `appshots.yaml` with launch args, defaults, and file configs
-6. Optionally generates Swift code to add launch argument support (`--ai` flag)
-
-**Your keys stay local.** AppShots calls the API directly from your machine. No intermediary servers.
-
-## Requirements
-
-- macOS 13+ (Ventura or later)
-- Xcode 15+ with iOS Simulator
-- Python 3.9+
-- Pillow (`pip install Pillow`)
-
-## How We Built This
-
-AppShots was born from building a cybersecurity study app. We needed screenshots for TikTok marketing and App Store submission, and discovered that `xcrun simctl` has no tap or swipe commands. 
-
-Instead of fighting the simulator's UI, we built a system that:
-1. Injects launch arguments to navigate directly to any screen
-2. Manipulates UserDefaults to set any app state
-3. Rebuilds and relaunches for each screen configuration
-
-This approach is more reliable than coordinate-based tapping and works across all device sizes without adjustment.
-
-## Contributing
-
-PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+---
 
 ## License
 

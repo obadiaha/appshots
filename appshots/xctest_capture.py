@@ -332,44 +332,51 @@ final class ScreenshotTests: XCTestCase {{
 
             self.log(f"    [{i+1}/{len(screens)}] {name}")
 
-            # Clear and set defaults for this screen
-            self.clear_simulator_defaults(device_udid)
-            self.set_simulator_defaults(device_udid, defaults)
+            # GAP 4: Wrap each screen capture in try/except so one failure
+            # never crashes the whole pipeline.
+            try:
+                # Clear and set defaults for this screen
+                self.clear_simulator_defaults(device_udid)
+                self.set_simulator_defaults(device_udid, defaults)
 
-            # Terminate app if running (clean state)
-            self.run_cmd(
-                ["xcrun", "simctl", "terminate", device_udid, self.bundle_id],
-                check=False,
-            )
+                # Terminate app if running (clean state)
+                self.run_cmd(
+                    ["xcrun", "simctl", "terminate", device_udid, self.bundle_id],
+                    check=False,
+                )
 
-            # Run just this one test
-            derived = self.runner_dir / "DerivedData"
-            xctestrun_files = list(derived.rglob("*.xctestrun"))
-            if not xctestrun_files:
-                raise RuntimeError("No .xctestrun file found after build")
-            xctestrun = xctestrun_files[0]
+                # Run just this one test
+                derived = self.runner_dir / "DerivedData"
+                xctestrun_files = list(derived.rglob("*.xctestrun"))
+                if not xctestrun_files:
+                    raise RuntimeError("No .xctestrun file found after build")
+                xctestrun = xctestrun_files[0]
 
-            results_path = self.runner_dir / f"Results-{i}.xcresult"
-            cmd = [
-                "xcodebuild", "test-without-building",
-                "-xctestrun", str(xctestrun),
-                "-destination", f"id={device_udid}",
-                "-resultBundlePath", str(results_path),
-                "-only-testing", test_method,
-            ]
-            result = self.run_cmd(cmd, check=False)
+                results_path = self.runner_dir / f"Results-{i}.xcresult"
+                cmd = [
+                    "xcodebuild", "test-without-building",
+                    "-xctestrun", str(xctestrun),
+                    "-destination", f"id={device_udid}",
+                    "-resultBundlePath", str(results_path),
+                    "-only-testing", test_method,
+                ]
+                result = self.run_cmd(cmd, check=False)
 
-            # Check if screenshot was captured
-            screenshot = self.screenshots_dir / f"{name}.png"
-            if screenshot.exists():
-                dest = out / screenshot.name
-                shutil.copy2(screenshot, dest)
-                results.append(str(dest))
-                self.log(f"      ✅ {dest}")
-            else:
-                self.log(f"      ⚠️  No screenshot (test may have failed)")
-                if result.returncode != 0:
-                    self.debug(result.stderr[-500:] if result.stderr else "no stderr")
+                # Check if screenshot was captured
+                screenshot = self.screenshots_dir / f"{name}.png"
+                if screenshot.exists():
+                    dest = out / screenshot.name
+                    shutil.copy2(screenshot, dest)
+                    results.append(str(dest))
+                    self.log(f"      ✅ {dest}")
+                else:
+                    self.log(f"      ⚠️  No screenshot (test may have failed)")
+                    if result.returncode != 0:
+                        self.debug(result.stderr[-500:] if result.stderr else "no stderr")
+
+            except Exception as e:
+                self.log(f"      ❌ Screen '{name}' failed (skipping): {e}")
+                self.debug(str(e))
 
         self.log(f"  📸 {len(results)}/{len(screens)} screenshots captured")
         return results

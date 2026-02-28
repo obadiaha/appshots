@@ -14,11 +14,12 @@ import json
 import os
 import re
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
 
 
-SYSTEM_PROMPT = """You are an expert iOS developer analyzing a SwiftUI codebase to map every screen in the app.
+SYSTEM_PROMPT = """You are an expert iOS developer analyzing an iOS app codebase to map every screen in the app.
 
 Your job: identify every distinct screen/view the user can see, and for each one, determine:
 1. The screen name (descriptive, kebab-case)
@@ -27,13 +28,31 @@ Your job: identify every distinct screen/view the user can see, and for each one
 4. What data files need to exist (e.g., JSON in Documents directory)
 5. A short marketing caption describing the screen
 
+SWIFTUI PATTERNS TO DETECT:
+- TabView tabs, NavigationStack destinations, .sheet modifiers, .fullScreenCover, alerts
+- @State, @AppStorage, @Binding variables that control navigation
+- CommandLine.arguments parsing (existing launch arg support)
+- UserDefaults reads that gate screens (onboarding, splash, etc.)
+- File loads from Documents directory or app bundle
+
+UIKIT PATTERNS TO DETECT:
+- UIViewController subclasses and their storyboard/xib names
+- UIStoryboard instantiation (UIStoryboard(name:bundle:).instantiateViewController)
+- Segue identifiers (performSegue(withIdentifier:), shouldPerformSegue)
+- UINavigationController push/pop (pushViewController, popViewController)
+- UITabBarController with viewControllers
+- Modal presentation (present(_:animated:), dismiss(animated:))
+- UITableView/UICollectionView with cell types that lead to detail screens
+- Storyboard scene identifiers and Storyboard IDs
+
+STORYBOARD DATA (if provided):
+- View controller class names and storyboard IDs
+- Segue identifiers and their destinations
+- Tab bar items and their view controllers
+- Navigation relationships
+
 IMPORTANT RULES:
-- Look for TabView tabs, NavigationStack destinations, .sheet modifiers, .fullScreenCover, alerts
-- Identify @State, @AppStorage, @Binding variables that control navigation
 - **CRITICAL: Check for CommandLine.arguments parsing (existing launch arg support).** If the app already reads launch arguments (e.g., `-tab=lock`, `-showQuiz`, etc.), USE THEM in launch_args for each screen. This is the primary navigation mechanism.
-- Check for UserDefaults reads that gate screens (onboarding, splash, etc.)
-- Check for file loads from Documents directory or app bundle
-- If the app has a splash screen, include how to skip it via UserDefaults
 - **ALL dates MUST use ISO 8601 string format** (e.g., "2026-06-01T00:00:00Z"). NEVER use Unix timestamps (integers/floats like 1770287400). Swift's UserDefaults.standard.object(forKey:) as? Date requires the `-date` flag format.
 - **App group UserDefaults (suiteName: "group.xxx")** cannot be nested as YAML dicts. Use flat keys with a comment, e.g.: `lastUnlockDate: "2026-01-01T12:00:00Z"  # app group key`
 - **Include EVERY distinct visual state**, not just navigation destinations. If a view looks different with data vs empty, include both states.
@@ -113,68 +132,173 @@ The Swift code should:
 - Be minimal and non-destructive (wrapped in #if DEBUG)
 """
 
+# ── Config helpers (delegated to appshots.config) ──────────────────────────────
+
+from .config import load_config as load_saved_config, save_config, prompt_for_api_key, ensure_api_key
+
+
+# ── Storyboard/XIB parsing ─────────────────────────────────────────────────────
+
+def parse_storyboard(path: Path) -> dict:
+    """Parse a .storyboard or .xib file and extract UIKit screen information."""
+    info = {
+        "file": str(path.name),
+        "view_controllers": [],
+        "segues": [],
+        "tab_items": [],
+        "initial_vc": None,
+    }
+    
+    try:
+        tree = ET.parse(path)
+        root = tree.getroot()
+        
+        # Find initial view controller
+        info["initial_vc"] = root.get("initialViewController")
+        
+        # Iterate all elements
+        for elem in root.iter():
+            tag = elem.tag.lower()
+            
+            # View controllers
+            if tag in ("viewcontroller", "tableviewcontroller", "collectionviewcontroller",
+                       "navigationcontroller", "tabbarcontroller", "splitviewcontroller",
+                       "pageviewcontroller", "glkviewcontroller", "avplayerviewcontroller"):
+                vc_info = {
+                    "type": elem.tag,
+                    "id": elem.get("id"),
+                    "storyboard_id": elem.get("storyboardIdentifier"),
+                    "custom_class": elem.get("customClass"),
+                    "title": elem.get("title"),
+                    "initial": elem.get("id") == info["initial_vc"],
+                }
+                if any(v for v in vc_info.values()):
+                    info["view_controllers"].append(vc_info)
+            
+            # Segues
+            elif tag == "segue":
+                segue_info = {
+                    "identifier": elem.get("identifier"),
+                    "kind": elem.get("kind"),
+                    "destination": elem.get("destination"),
+                }
+                if segue_info["identifier"] or segue_info["destination"]:
+                    info["segues"].append(segue_info)
+            
+            # Tab bar items
+            elif tag == "tabbaritem":
+                item = {
+                    "title": elem.get("title"),
+                    "image": elem.get("image"),
+                    "id": elem.get("id"),
+                }
+                if item["title"]:
+                    info["tab_items"].append(item)
+    
+    except Exception as e:
+        info["parse_error"] = str(e)
+    
+    return info
+
+
+def format_storyboard_data(storyboard_infos: list[dict]) -> str:
+    """Format parsed storyboard data for inclusion in the AI prompt."""
+    if not storyboard_infos:
+        return ""
+    
+    lines = ["// === STORYBOARD / XIB DATA ==="]
+    for sb in storyboard_infos:
+        lines.append(f"\n// File: {sb['file']}")
+        if sb.get("initial_vc"):
+            lines.append(f"//   Initial VC ID: {sb['initial_vc']}")
+        
+        if sb.get("view_controllers"):
+            lines.append("//   View Controllers:")
+            for vc in sb["view_controllers"]:
+                parts = []
+                if vc.get("custom_class"):
+                    parts.append(f"class={vc['custom_class']}")
+                if vc.get("storyboard_id"):
+                    parts.append(f"storyboardID={vc['storyboard_id']}")
+                if vc.get("title"):
+                    parts.append(f"title={vc['title']}")
+                if vc.get("initial"):
+                    parts.append("INITIAL")
+                lines.append(f"//     [{vc['type']}] {' | '.join(parts)}")
+        
+        if sb.get("segues"):
+            lines.append("//   Segues:")
+            for seg in sb["segues"]:
+                parts = []
+                if seg.get("identifier"):
+                    parts.append(f"id={seg['identifier']}")
+                if seg.get("kind"):
+                    parts.append(f"kind={seg['kind']}")
+                if seg.get("destination"):
+                    parts.append(f"dest={seg['destination']}")
+                lines.append(f"//     {' | '.join(parts)}")
+        
+        if sb.get("tab_items"):
+            lines.append("//   Tab Bar Items:")
+            for item in sb["tab_items"]:
+                lines.append(f"//     {item.get('title', 'untitled')} (image={item.get('image', 'none')})")
+    
+    return "\n".join(lines)
+
+
+# ── Main analyzer ──────────────────────────────────────────────────────────────
 
 class AIAnalyzer:
     def __init__(self, provider: Optional[str] = None, api_key: Optional[str] = None):
-        self.provider, self.api_key = self._detect_provider(provider, api_key)
-        if not self.api_key:
-            raise ValueError(
-                "No API key found. Set one of:\n"
-                "  ANTHROPIC_API_KEY (recommended)\n"
-                "  OPENAI_API_KEY\n"
-                "  GEMINI_API_KEY\n"
-                "Or pass --api-key <key> --provider <anthropic|openai|gemini>"
-            )
-
-    def _detect_provider(self, provider, api_key):
-        """Auto-detect provider from available API keys."""
-        if provider and api_key:
-            return provider, api_key
-
-        # Check env vars in priority order
-        for env_var, prov in [
-            ("ANTHROPIC_API_KEY", "anthropic"),
-            ("OPENAI_API_KEY", "openai"),
-            ("GEMINI_API_KEY", "gemini"),
-        ]:
-            key = os.environ.get(env_var)
-            if key:
-                return prov, key
-
-        return None, None
+        self.provider, self.api_key = ensure_api_key(provider, api_key)
 
     def collect_swift_files(self, project_path: str) -> str:
-        """Collect all Swift source files from the project."""
+        """Collect all Swift source files, storyboards, and xibs from the project."""
         project = Path(os.path.expanduser(project_path))
         project_dir = project.parent
 
-        swift_files = sorted(project_dir.rglob("*.swift"))
-        
-        # Filter out build artifacts, pods, packages
-        filtered = []
-        for f in swift_files:
-            rel = str(f.relative_to(project_dir))
-            if any(skip in rel for skip in [
-                "Pods/", "DerivedData/", ".build/", "Packages/",
-                "Tests/", "UITests/", "Preview Content/"
-            ]):
-                continue
-            filtered.append(f)
+        # Exclusion list for build artifacts / dependencies
+        skip_dirs = {"Pods", "DerivedData", ".build", "Packages", "Tests", "UITests", "Preview Content"}
 
-        if not filtered:
-            raise FileNotFoundError(f"No Swift files found in {project_dir}")
+        def should_skip(path: Path) -> bool:
+            rel = str(path.relative_to(project_dir))
+            return any(f"{skip}/" in rel or rel.startswith(f"{skip}/") for skip in skip_dirs)
 
-        # Build context string
+        # Swift files
+        swift_files = sorted(f for f in project_dir.rglob("*.swift") if not should_skip(f))
+
+        # Storyboard and XIB files (UIKit support)
+        ib_files = sorted(
+            f for f in list(project_dir.rglob("*.storyboard")) + list(project_dir.rglob("*.xib"))
+            if not should_skip(f)
+        )
+
+        if not swift_files and not ib_files:
+            raise FileNotFoundError(f"No Swift or IB files found in {project_dir}")
+
+        # Parse storyboards/xibs and format
+        storyboard_data = ""
+        if ib_files:
+            parsed_ibs = [parse_storyboard(f) for f in ib_files]
+            storyboard_data = format_storyboard_data(parsed_ibs)
+            print(f"  📐 Collected {len(ib_files)} storyboard/xib files")
+
+        # Build context string from Swift files
         context = []
         total_chars = 0
         max_chars = 150000  # Stay within token limits
 
-        for f in filtered:
+        # Include storyboard data first
+        if storyboard_data:
+            context.append(storyboard_data + "\n\n")
+            total_chars += len(storyboard_data)
+
+        for f in swift_files:
             try:
                 content = f.read_text()
                 header = f"// === {f.relative_to(project_dir)} ===\n"
                 chunk = header + content + "\n\n"
-                
+
                 if total_chars + len(chunk) > max_chars:
                     context.append(f"// === {f.relative_to(project_dir)} === (TRUNCATED - file too large)\n")
                     context.append(content[:5000] + "\n...(truncated)\n\n")
@@ -185,7 +309,7 @@ class AIAnalyzer:
             except Exception:
                 continue
 
-        print(f"  📄 Collected {len(filtered)} Swift files ({total_chars:,} chars)")
+        print(f"  📄 Collected {len(swift_files)} Swift files ({total_chars:,} chars)")
         return "".join(context)
 
     def analyze(self, project_path: str, generate_swift: bool = True) -> dict:
@@ -302,10 +426,8 @@ class AIAnalyzer:
             try:
                 return result["candidates"][0]["content"]["parts"][0]["text"]
             except (KeyError, IndexError) as e:
-                # Debug: print the actual response structure
                 import sys
                 print(f"\n⚠️  Unexpected Gemini response structure:", file=sys.stderr)
-                # Check for blocked content
                 if "candidates" in result and result["candidates"]:
                     cand = result["candidates"][0]
                     if "finishReason" in cand:

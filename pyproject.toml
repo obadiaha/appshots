@@ -4,26 +4,45 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "appshots"
-version = "0.1.0"
-description = "Automated App Store screenshot generation for iOS developers"
+version = "0.2.0"
+description = "One command. Every screen. Zero code changes. Automated App Store screenshots for iOS."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
 authors = [
     {name = "Go Digital", email = "hello@godigitalapps.com"},
 ]
-keywords = ["ios", "screenshots", "app-store", "xcode", "simulator", "automation"]
+keywords = ["ios", "screenshots", "app-store", "xcode", "simulator", "automation", "xcuitest"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Testing",
     "Topic :: Multimedia :: Graphics :: Capture :: Screen Capture",
 ]
 dependencies = [
     "Pillow>=10.0",
     "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.25"]
+openai = ["openai>=1.0"]
+google = ["google-generativeai>=0.5"]
+all = [
+    "anthropic>=0.25",
+    "openai>=1.0",
+    "google-generativeai>=0.5",
+]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
 ]
 
 [project.scripts]

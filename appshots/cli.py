@@ -92,10 +92,38 @@ def main():
     if args.command == "init":
         if getattr(args, "ai", False):
             from .ai_init import ai_generate_config
+            from .ai_analyzer import load_saved_config, prompt_for_api_key
+            import os as _os
+
+            init_provider = getattr(args, "provider", None)
+            init_key = getattr(args, "api_key", None)
+            if not init_key:
+                saved = load_saved_config()
+                if saved.get("api_key"):
+                    init_key = saved["api_key"]
+                    init_provider = init_provider or saved.get("provider")
+            if not init_key:
+                for env_var, prov in [
+                    ("ANTHROPIC_API_KEY", "anthropic"),
+                    ("OPENAI_API_KEY", "openai"),
+                    ("GEMINI_API_KEY", "gemini"),
+                ]:
+                    key = _os.environ.get(env_var)
+                    if key:
+                        init_key = key
+                        init_provider = init_provider or prov
+                        break
+            if not init_key:
+                if sys.stdin.isatty():
+                    init_provider, init_key = prompt_for_api_key()
+                else:
+                    print("❌ No API key found. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.")
+                    sys.exit(1)
+
             ai_generate_config(
                 args.project, args.output,
-                provider=getattr(args, "provider", None),
-                api_key=getattr(args, "api_key", None),
+                provider=init_provider,
+                api_key=init_key,
                 generate_swift=not getattr(args, "no_swift", False),
             )
         else:
@@ -113,9 +141,37 @@ def main():
 
     elif args.command == "auto":
         from .hybrid import HybridCapture
+        from .ai_analyzer import load_saved_config, prompt_for_api_key
         import json as _json
 
         verbose = getattr(args, "verbose", False)
+
+        # GAP 1: Resolve API key — CLI arg → saved config → env var → interactive prompt
+        resolved_provider = getattr(args, "provider", None)
+        resolved_key = getattr(args, "api_key", None)
+        if not resolved_key:
+            saved = load_saved_config()
+            if saved.get("api_key"):
+                resolved_key = saved["api_key"]
+                resolved_provider = resolved_provider or saved.get("provider")
+        if not resolved_key:
+            for env_var, prov in [
+                ("ANTHROPIC_API_KEY", "anthropic"),
+                ("OPENAI_API_KEY", "openai"),
+                ("GEMINI_API_KEY", "gemini"),
+            ]:
+                key = __import__("os").environ.get(env_var)
+                if key:
+                    resolved_key = key
+                    resolved_provider = resolved_provider or prov
+                    break
+        if not resolved_key:
+            import sys
+            if sys.stdin.isatty():
+                resolved_provider, resolved_key = prompt_for_api_key()
+            else:
+                print("❌ No API key found. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.")
+                sys.exit(1)
 
         # Find or create simulator
         device_name_sim = f"AppShots-{args.device}"
@@ -159,8 +215,8 @@ def main():
             project_path=args.project,
             bundle_id=args.bundle_id,
             scheme=getattr(args, "scheme", None),
-            provider=getattr(args, "provider", None),
-            api_key=getattr(args, "api_key", None),
+            provider=resolved_provider,
+            api_key=resolved_key,
             verbose=verbose,
         )
 

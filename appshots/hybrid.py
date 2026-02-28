@@ -128,6 +128,15 @@ class HybridCapture:
         build_start = time.time()
         build_dir = "/tmp/appshots-hybrid-build"
 
+        # GAP 7: Clean build dir before building to prevent stale .app files
+        # from previous runs (prevents e.g. Harden.app showing up for Potodoro).
+        if Path(build_dir).exists():
+            self.log(f"  🧹 Cleaning stale build dir...")
+            try:
+                shutil.rmtree(build_dir)
+            except Exception as e:
+                self.log(f"  ⚠️  Could not clean build dir: {e}")
+
         cmd = [
             "xcodebuild", "build",
             "-project", self.project_path,
@@ -141,12 +150,18 @@ class HybridCapture:
         if result.returncode != 0:
             raise RuntimeError(f"Build failed:\n{result.stderr[-1000:]}")
 
-        # Find .app
+        # Find .app — only look in the scheme's product dir to avoid cross-app matches
         app_path = None
+        scheme_lower = self.scheme.lower()
         for p in Path(build_dir).rglob("*.app"):
             if "Debug-iphonesimulator" in str(p) and "Extension" not in p.name:
-                app_path = str(p)
-                break
+                # Prefer exact scheme match to avoid picking up wrong app
+                if p.stem.lower() == scheme_lower:
+                    app_path = str(p)
+                    break
+                elif app_path is None:
+                    app_path = str(p)  # fallback to first match
+
         if not app_path:
             raise RuntimeError("Could not find built .app")
 
@@ -190,7 +205,13 @@ class HybridCapture:
     # ── Step 3: Dump Accessibility Trees ─────────────────────────────
 
     def dump_trees(self, device_udid: str, states: list[dict]) -> dict[str, str]:
-        """Launch app in each state and dump the real accessibility tree."""
+        """Launch app in each state and dump the real accessibility tree.
+        
+        GAP 3: After dumping the initial tree, also:
+        - Tap each visible tab and dump sub-trees
+        - Tap the first 3 hittable buttons and dump what changes
+        - Swipe left/right and dump changes
+        """
         self.log("\n🔍 Step 2: Dumping real accessibility trees...")
         
         self.explorer.create_explorer_project()
@@ -301,7 +322,11 @@ final class ExplorerTests: XCTestCase {{
         elements.append("sheets: \\(app.sheets.count)")
         elements.append("popovers: \\(app.popovers.count)")
 
-        // Also try tapping each tab and dumping the tree for that tab
+        // ── GAP 3: Enhanced tree dumping ─────────────────────────────────────
+        // Capture baseline text fingerprint for change detection
+        let baselineTexts = app.staticTexts.allElementsBoundByIndex.prefix(10).map {{ $0.label }}.joined(separator: "|")
+
+        // Tab bar: tap each tab and dump sub-tree
         let tabCount = app.tabBars.buttons.count
         if tabCount > 0 {{
             for t in 0..<tabCount {{
@@ -328,61 +353,118 @@ final class ExplorerTests: XCTestCase {{
                             elements.append("  switch[\\(i)]: \\(el.label) = \\(el.value ?? "nil")")
                         }}
                     }}
+                    for i in 0..<min(app.cells.count, 20) {{
+                        let el = app.cells.element(boundBy: i)
+                        if el.exists {{
+                            elements.append("  cell[\\(i)]: \\(el.label)")
+                        }}
+                    }}
                 }}
             }}
         }} else {{
-            // No tab bar — try swipes for paged views
-            elements.append("\\n=== SWIPE LEFT ===")
-            let beforeHash = app.staticTexts.allElementsBoundByIndex.prefix(10).map {{ $0.label }}.joined(separator: "|")
-            app.swipeLeft()
-            sleep(1)
-            let afterHash = app.staticTexts.allElementsBoundByIndex.prefix(10).map {{ $0.label }}.joined(separator: "|")
-            if afterHash != beforeHash {{
-                elements.append("SWIPE LEFT: NEW SCREEN")
-                for i in 0..<min(app.buttons.count, 20) {{
-                    let el = app.buttons.element(boundBy: i)
-                    if el.exists && el.isHittable {{
-                        elements.append("  button[\\(i)]: \\(el.label)")
+            // No tab bar — try tapping first 3 hittable non-tab buttons to discover hidden screens
+            elements.append("\\n=== BUTTON TAPS (sub-screen discovery) ===")
+            var tappedCount = 0
+            for i in 0..<min(app.buttons.count, 20) {{
+                if tappedCount >= 3 {{ break }}
+                let btn = app.buttons.element(boundBy: i)
+                guard btn.exists && btn.isHittable else {{ continue }}
+                let btnLabel = btn.label
+                // Skip system/destructive buttons
+                let skipLabels = ["Close", "Cancel", "Dismiss", "X", "Back", "Done"]
+                if skipLabels.contains(where: {{ btnLabel.contains($0) }}) {{ continue }}
+                
+                btn.tap()
+                sleep(1)
+                
+                let afterTexts = app.staticTexts.allElementsBoundByIndex.prefix(10).map {{ $0.label }}.joined(separator: "|")
+                if afterTexts != baselineTexts {{
+                    elements.append("\\n=== AFTER TAP button[\\(i)] '\\(btnLabel)' ===")
+                    for j in 0..<min(app.buttons.count, 20) {{
+                        let el = app.buttons.element(boundBy: j)
+                        if el.exists && el.isHittable {{
+                            elements.append("  button[\\(j)]: label=\\(el.label) | id=\\(el.identifier)")
+                        }}
                     }}
-                }}
-                for i in 0..<min(app.staticTexts.count, 20) {{
-                    let el = app.staticTexts.element(boundBy: i)
-                    if el.exists {{
-                        elements.append("  text[\\(i)]: \\(el.label)")
+                    for j in 0..<min(app.staticTexts.count, 20) {{
+                        let el = app.staticTexts.element(boundBy: j)
+                        if el.exists {{
+                            elements.append("  text[\\(j)]: \\(el.label)")
+                        }}
                     }}
-                }}
-            }} else {{
-                elements.append("SWIPE LEFT: SAME SCREEN")
-            }}
-            
-            // Swipe back
-            app.swipeRight()
-            sleep(1)
-            
-            elements.append("\\n=== SWIPE RIGHT ===")
-            app.swipeRight()
-            sleep(1)
-            let afterRight = app.staticTexts.allElementsBoundByIndex.prefix(10).map {{ $0.label }}.joined(separator: "|")
-            if afterRight != beforeHash {{
-                elements.append("SWIPE RIGHT: NEW SCREEN")
-                for i in 0..<min(app.buttons.count, 20) {{
-                    let el = app.buttons.element(boundBy: i)
-                    if el.exists && el.isHittable {{
-                        elements.append("  button[\\(i)]: \\(el.label)")
+                    for j in 0..<min(app.cells.count, 15) {{
+                        let el = app.cells.element(boundBy: j)
+                        if el.exists {{
+                            elements.append("  cell[\\(j)]: \\(el.label)")
+                        }}
                     }}
-                }}
-                for i in 0..<min(app.staticTexts.count, 20) {{
-                    let el = app.staticTexts.element(boundBy: i)
-                    if el.exists {{
-                        elements.append("  text[\\(i)]: \\(el.label)")
+                    // Try to navigate back
+                    let backBtn = app.navigationBars.buttons.element(boundBy: 0)
+                    if backBtn.exists && backBtn.isHittable {{
+                        backBtn.tap()
+                        sleep(1)
+                    }} else {{
+                        // Swipe down for sheets, or dismiss
+                        app.swipeDown()
+                        sleep(1)
                     }}
+                    tappedCount += 1
                 }}
-            }} else {{
-                elements.append("SWIPE RIGHT: SAME SCREEN")
             }}
         }}
 
-        // Save screenshot too
+        // ── Swipe left/right discovery ─────────────────────────────────────────
+        elements.append("\\n=== SWIPE LEFT ===")
+        let beforeSwipeTexts = app.staticTexts.allElementsBoundByIndex.prefix(10).map {{ $0.label }}.joined(separator: "|")
+        app.swipeLeft()
+        sleep(1)
+        let afterSwipeLeft = app.staticTexts.allElementsBoundByIndex.prefix(10).map {{ $0.label }}.joined(separator: "|")
+        if afterSwipeLeft != beforeSwipeTexts {{
+            elements.append("SWIPE LEFT: NEW SCREEN")
+            for i in 0..<min(app.buttons.count, 20) {{
+                let el = app.buttons.element(boundBy: i)
+                if el.exists && el.isHittable {{
+                    elements.append("  button[\\(i)]: \\(el.label)")
+                }}
+            }}
+            for i in 0..<min(app.staticTexts.count, 20) {{
+                let el = app.staticTexts.element(boundBy: i)
+                if el.exists {{
+                    elements.append("  text[\\(i)]: \\(el.label)")
+                }}
+            }}
+        }} else {{
+            elements.append("SWIPE LEFT: SAME SCREEN (no new content)")
+        }}
+
+        // Swipe back to center
+        app.swipeRight()
+        sleep(1)
+
+        elements.append("\\n=== SWIPE RIGHT ===")
+        let beforeSwipeRight = app.staticTexts.allElementsBoundByIndex.prefix(10).map {{ $0.label }}.joined(separator: "|")
+        app.swipeRight()
+        sleep(1)
+        let afterSwipeRight = app.staticTexts.allElementsBoundByIndex.prefix(10).map {{ $0.label }}.joined(separator: "|")
+        if afterSwipeRight != beforeSwipeRight {{
+            elements.append("SWIPE RIGHT: NEW SCREEN")
+            for i in 0..<min(app.buttons.count, 20) {{
+                let el = app.buttons.element(boundBy: i)
+                if el.exists && el.isHittable {{
+                    elements.append("  button[\\(i)]: \\(el.label)")
+                }}
+            }}
+            for i in 0..<min(app.staticTexts.count, 20) {{
+                let el = app.staticTexts.element(boundBy: i)
+                if el.exists {{
+                    elements.append("  text[\\(i)]: \\(el.label)")
+                }}
+            }}
+        }} else {{
+            elements.append("SWIPE RIGHT: SAME SCREEN (no new content)")
+        }}
+
+        // Save screenshot
         let screenshot = XCUIScreen.main.screenshot()
         let data = screenshot.pngRepresentation
         let ssUrl = URL(fileURLWithPath: "\\(screenshotsPath)/tree-dump.png")
@@ -409,38 +491,44 @@ final class ExplorerTests: XCTestCase {{
 
             self.log(f"  📱 State {idx + 1}/{len(states)}: {state_key}")
 
-            # Clear and set defaults
-            self.explorer.clear_defaults(device_udid)
-            self.explorer.set_defaults(device_udid, defaults)
-            self.explorer.terminate_app(device_udid)
+            # GAP 4: Wrap each tree dump in try/except so one failure doesn't stop the pipeline
+            try:
+                # Clear and set defaults
+                self.explorer.clear_defaults(device_udid)
+                self.explorer.set_defaults(device_udid, defaults)
+                self.explorer.terminate_app(device_udid)
 
-            # Clean previous tree files
-            for f in self.explorer.tree_dir.glob("*"):
-                f.unlink()
+                # Clean previous tree files
+                for f in self.explorer.tree_dir.glob("*"):
+                    f.unlink()
 
-            # Run the tree dump test
-            derived = self.explorer.runner_dir / "DerivedData"
-            xctestrun_files = list(derived.rglob("*.xctestrun"))
-            if not xctestrun_files:
-                raise RuntimeError("No .xctestrun found")
+                # Run the tree dump test
+                derived = self.explorer.runner_dir / "DerivedData"
+                xctestrun_files = list(derived.rglob("*.xctestrun"))
+                if not xctestrun_files:
+                    raise RuntimeError("No .xctestrun found")
 
-            results_path = self.explorer.runner_dir / f"TreeDump-{idx}.xcresult"
-            cmd = [
-                "xcodebuild", "test-without-building",
-                "-xctestrun", str(xctestrun_files[0]),
-                "-destination", f"id={device_udid}",
-                "-resultBundlePath", str(results_path),
-            ]
-            self.run_cmd(cmd, check=False)
+                results_path = self.explorer.runner_dir / f"TreeDump-{idx}.xcresult"
+                cmd = [
+                    "xcodebuild", "test-without-building",
+                    "-xctestrun", str(xctestrun_files[0]),
+                    "-destination", f"id={device_udid}",
+                    "-resultBundlePath", str(results_path),
+                ]
+                self.run_cmd(cmd, check=False)
 
-            # Read the element list
-            elements_file = self.explorer.tree_dir / "elements.txt"
-            if elements_file.exists():
-                trees[state_key] = elements_file.read_text()
-                self.log(f"    ✅ Tree dumped ({len(trees[state_key])} chars)")
-            else:
-                trees[state_key] = "(no elements captured)"
-                self.log(f"    ⚠️  No tree captured")
+                # Read the element list
+                elements_file = self.explorer.tree_dir / "elements.txt"
+                if elements_file.exists():
+                    trees[state_key] = elements_file.read_text()
+                    self.log(f"    ✅ Tree dumped ({len(trees[state_key])} chars)")
+                else:
+                    trees[state_key] = "(no elements captured)"
+                    self.log(f"    ⚠️  No tree captured for state {state_key}")
+
+            except Exception as e:
+                self.log(f"    ❌ Error dumping tree for state {state_key}: {e}")
+                trees[state_key] = f"(tree dump failed: {e})"
 
         return trees
 
@@ -539,31 +627,54 @@ Mark unreachable screens as reachable: false."""
         device_name: str = "default",
         save_yaml: Optional[str] = None,
     ) -> list[str]:
-        """Run the full hybrid pipeline."""
+        """Run the full hybrid pipeline. GAP 4: Each step is wrapped in try/except."""
         total_start = time.time()
 
         self.log("📸 AppShots Hybrid Capture")
         self.log("=" * 55)
 
         # Step 1: Build & install
-        self.build_and_install(device_udid)
+        try:
+            self.build_and_install(device_udid)
+        except Exception as e:
+            self.log(f"❌ Build/install failed: {e}")
+            raise
 
         # Step 2: AI source analysis
-        source = self.analyze_source()
+        try:
+            source = self.analyze_source()
+        except Exception as e:
+            self.log(f"❌ AI source analysis failed: {e}")
+            raise
 
         # Step 3: Dump real accessibility trees
-        trees = self.dump_trees(device_udid, source["states"])
+        try:
+            trees = self.dump_trees(device_udid, source["states"])
+        except Exception as e:
+            self.log(f"⚠️  Tree dumping failed (continuing with empty trees): {e}")
+            trees = {"state0": "(tree dump unavailable)"}
 
         # Step 4: AI plans navigation with real elements
-        yaml_config = self.plan_navigation(source, trees)
+        try:
+            yaml_config = self.plan_navigation(source, trees)
+        except Exception as e:
+            self.log(f"❌ Navigation planning failed: {e}")
+            raise
 
         # Save YAML if requested
         if save_yaml:
-            Path(save_yaml).write_text(yaml_config)
-            self.log(f"\n  💾 YAML saved: {save_yaml}")
+            try:
+                Path(save_yaml).write_text(yaml_config)
+                self.log(f"\n  💾 YAML saved: {save_yaml}")
+            except Exception as e:
+                self.log(f"  ⚠️  Could not save YAML: {e}")
 
         # Step 5: Execute screenshots
-        results = self.capture(device_udid, yaml_config, output_dir, device_name)
+        try:
+            results = self.capture(device_udid, yaml_config, output_dir, device_name)
+        except Exception as e:
+            self.log(f"❌ Screenshot capture failed: {e}")
+            raise
 
         total = time.time() - total_start
         self.log(f"\n{'=' * 55}")
@@ -571,6 +682,9 @@ Mark unreachable screens as reachable: false."""
         self.log(f"📸 Screenshots: {len(results)}")
 
         # Cleanup
-        self.explorer.cleanup()
+        try:
+            self.explorer.cleanup()
+        except Exception:
+            pass
 
         return results
