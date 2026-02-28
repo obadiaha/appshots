@@ -510,8 +510,15 @@ Mark unreachable screens as reachable: false."""
 
         self.log(f"  🎯 Capturing {len(reachable)} reachable screens...")
 
-        # Use XCTestCapture for execution
-        capture = XCTestCapture(self.bundle_id, verbose=self.verbose)
+        # XCTestCapture expects a config dict
+        config = {
+            "app": {
+                "bundle_id": self.bundle_id,
+                "project": self.project_path,
+                "scheme": self.scheme,
+            }
+        }
+        capture = XCTestCapture(config, verbose=self.verbose)
         try:
             results = capture.capture_all(
                 screens=reachable,
