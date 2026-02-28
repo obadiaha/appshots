@@ -2,6 +2,7 @@
 """AppShots CLI - Automated App Store screenshot generation."""
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -47,6 +48,18 @@ def main():
     resize_parser.add_argument("--output", "-o", help="Output directory")
     resize_parser.add_argument("--sizes", default="required", choices=["all", "required", "iphone", "ipad"],
                               help="Which sizes to generate")
+
+    # auto (hybrid)
+    auto_parser = subparsers.add_parser("auto", help="Fully automatic: AI + accessibility tree = reliable screenshots")
+    auto_parser.add_argument("--project", "-p", required=True, help="Path to .xcodeproj")
+    auto_parser.add_argument("--bundle-id", required=True, help="App bundle ID")
+    auto_parser.add_argument("--scheme", help="Build scheme (default: auto-detect from project name)")
+    auto_parser.add_argument("--device", "-d", default="iPhone 16 Pro Max", help="Simulator device")
+    auto_parser.add_argument("--output", "-o", default="./screenshots", help="Output directory")
+    auto_parser.add_argument("--save-yaml", help="Save generated YAML config to file")
+    auto_parser.add_argument("--provider", choices=["anthropic", "openai", "gemini"], help="AI provider")
+    auto_parser.add_argument("--api-key", help="API key (or set env vars)")
+    auto_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     # explore
     explore_parser = subparsers.add_parser("explore", help="Auto-discover all screens by crawling the UI (no AI needed)")
@@ -97,6 +110,68 @@ def main():
             skip_overlay=args.no_overlay,
             skip_build=args.no_build,
         )
+
+    elif args.command == "auto":
+        from .hybrid import HybridCapture
+        import json as _json
+
+        verbose = getattr(args, "verbose", False)
+
+        # Find or create simulator
+        device_name_sim = f"AppShots-{args.device}"
+        devs_result = subprocess.run(
+            ["xcrun", "simctl", "list", "devices", "-j"],
+            capture_output=True, text=True,
+        )
+        devs = _json.loads(devs_result.stdout)
+        udid = None
+        for rt, device_list in devs.get("devices", {}).items():
+            for dev in device_list:
+                if dev["name"] == device_name_sim:
+                    udid = dev["udid"]
+                    break
+            if udid:
+                break
+
+        if not udid:
+            device_type = args.device.replace(" ", "-")
+            dt = f"com.apple.CoreSimulator.SimDeviceType.{device_type}"
+            # Find latest runtime
+            runtimes_result = subprocess.run(
+                ["xcrun", "simctl", "list", "runtimes", "-j"],
+                capture_output=True, text=True,
+            )
+            runtimes = _json.loads(runtimes_result.stdout)
+            ios_runtime = None
+            for rt in runtimes.get("runtimes", []):
+                if "iOS" in rt.get("name", "") and rt.get("isAvailable", False):
+                    ios_runtime = rt["identifier"]
+            if not ios_runtime:
+                print("❌ No iOS runtime found")
+                sys.exit(1)
+            res = subprocess.run(
+                ["xcrun", "simctl", "create", device_name_sim, dt, ios_runtime],
+                capture_output=True, text=True,
+            )
+            udid = res.stdout.strip()
+
+        hybrid = HybridCapture(
+            project_path=args.project,
+            bundle_id=args.bundle_id,
+            scheme=getattr(args, "scheme", None),
+            provider=getattr(args, "provider", None),
+            api_key=getattr(args, "api_key", None),
+            verbose=verbose,
+        )
+
+        results = hybrid.run(
+            device_udid=udid,
+            output_dir=args.output,
+            device_name=args.device,
+            save_yaml=getattr(args, "save_yaml", None),
+        )
+
+        print(f"\n🎉 Done! {len(results)} screenshots captured.")
 
     elif args.command == "explore":
         from .explorer import UIExplorer

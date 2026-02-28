@@ -297,7 +297,7 @@ class AIAnalyzer:
             headers={"Content-Type": "application/json"}
         )
 
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=300) as resp:
             result = json.loads(resp.read())
             try:
                 return result["candidates"][0]["content"]["parts"][0]["text"]
