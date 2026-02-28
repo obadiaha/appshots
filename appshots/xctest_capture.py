@@ -84,6 +84,7 @@ class XCTestCapture:
         captures_path = str(self.screenshots_dir).replace("\\", "\\\\")
 
         methods = []
+        XCTestCapture._tap_counter = 0
         for i, screen in enumerate(screens):
             nav = screen.get("navigation", [])
             wait = screen.get("wait_seconds", 2)
@@ -91,13 +92,11 @@ class XCTestCapture:
             safe_name = name.replace("-", "_").replace(" ", "_")
             method = f"test_{i:03d}_{safe_name}"
 
-            defaults_code = self._generate_defaults_code(screen.get("defaults", {}))
             nav_code = self._generate_nav_code(nav)
 
             methods.append(f'''
     func {method}() {{
         let app = XCUIApplication(bundleIdentifier: "{self.bundle_id}")
-{defaults_code}
         app.launch()
         sleep(UInt32({wait}))
 
@@ -127,25 +126,38 @@ final class ScreenshotTests: XCTestCase {{
         self.debug(f"Generated {len(methods)} test methods → {test_file}")
         return test_file
 
-    def _generate_defaults_code(self, defaults: dict) -> str:
-        """Generate Swift code to set UserDefaults via launch args."""
+    def set_simulator_defaults(self, device_udid: str, defaults: dict):
+        """Set UserDefaults on the simulator via xcrun simctl spawn (reliable for @AppStorage)."""
         if not defaults:
-            return ""
-        # XCUIApplication supports setting launch arguments
-        # We can pass UserDefaults via -AppleLanguages style or via launchArguments
-        lines = ["        // Set UserDefaults via launch arguments"]
-        args = []
+            return
         for key, value in defaults.items():
             if isinstance(value, bool):
-                args.append(f'"-{key}"')
-                args.append(f'"{str(value).lower()}"')
+                val_type = "-bool"
+                val_str = "YES" if value else "NO"
+            elif isinstance(value, int):
+                val_type = "-int"
+                val_str = str(value)
+            elif isinstance(value, float):
+                val_type = "-float"
+                val_str = str(value)
             else:
-                args.append(f'"-{key}"')
-                args.append(f'"{value}"')
-        if args:
-            args_str = ", ".join(args)
-            lines.append(f"        app.launchArguments = [{args_str}]")
-        return "\n".join(lines)
+                val_type = "-string"
+                val_str = str(value)
+            cmd = [
+                "xcrun", "simctl", "spawn", device_udid,
+                "defaults", "write", self.bundle_id, key, val_type, val_str,
+            ]
+            self.run_cmd(cmd)
+            self.debug(f"Set default: {key} = {val_str} ({val_type})")
+
+    def clear_simulator_defaults(self, device_udid: str):
+        """Clear all UserDefaults for the app on the simulator."""
+        cmd = [
+            "xcrun", "simctl", "spawn", device_udid,
+            "defaults", "delete", self.bundle_id,
+        ]
+        self.run_cmd(cmd, check=False)  # OK if domain doesn't exist yet
+        self.debug("Cleared app defaults")
 
     def _generate_nav_code(self, steps: list) -> str:
         """Convert YAML navigation steps to Swift XCUITest code."""
@@ -161,6 +173,8 @@ final class ScreenshotTests: XCTestCase {{
                 lines.extend(self._step_to_swift(step))
         return "\n".join(lines)
 
+    _tap_counter = 0
+
     def _step_to_swift(self, step: dict) -> list[str]:
         """Convert a single navigation step dict to Swift lines."""
         lines = []
@@ -168,9 +182,11 @@ final class ScreenshotTests: XCTestCase {{
             lines.append(f'        app.tabBars.buttons["{step["tap_tab"]}"].firstMatch.tap()')
         elif "tap" in step:
             label = step["tap"]
+            XCTestCapture._tap_counter += 1
+            c = XCTestCapture._tap_counter
             lines.append(f'        // Try button first, then any element')
-            lines.append(f'        let btn = app.buttons["{label}"].firstMatch')
-            lines.append(f'        if btn.waitForExistence(timeout: 3) {{ btn.tap() }}')
+            lines.append(f'        let btn{c} = app.buttons["{label}"].firstMatch')
+            lines.append(f'        if btn{c}.waitForExistence(timeout: 3) {{ btn{c}.tap() }}')
             lines.append(f'        else {{ app.staticTexts["{label}"].firstMatch.tap() }}')
         elif "tap_text" in step:
             lines.append(f'        app.staticTexts["{step["tap_text"]}"].firstMatch.tap()')
@@ -185,7 +201,17 @@ final class ScreenshotTests: XCTestCase {{
         elif "tap_id" in step:
             lines.append(f'        app.otherElements["{step["tap_id"]}"].firstMatch.tap()')
         elif "tap_image" in step:
-            lines.append(f'        app.images["{step["tap_image"]}"].firstMatch.tap()')
+            # Try images first, fall back to buttons containing the image
+            img = step["tap_image"]
+            XCTestCapture._tap_counter += 1
+            c = XCTestCapture._tap_counter
+            lines.append(f'        let img{c} = app.images["{img}"].firstMatch')
+            lines.append(f'        if img{c}.waitForExistence(timeout: 3) {{ img{c}.tap() }}')
+            lines.append(f'        else {{ app.buttons.containing(.image, identifier: "{img}").firstMatch.tap() }}')
+        elif "tap_button_index" in step:
+            # Tap a button by its index (0-based) — useful for icon-only buttons
+            idx = step["tap_button_index"]
+            lines.append(f'        app.buttons.element(boundBy: {idx}).tap()')
         elif "swipe" in step:
             d = step["swipe"]
             lines.append(f'        app.swipe{d.capitalize()}()')
@@ -284,25 +310,68 @@ final class ScreenshotTests: XCTestCase {{
         output_dir: str,
         device_name: str = "default",
     ) -> list[str]:
-        """Full pipeline: create project → generate tests → build → run → collect."""
+        """Full pipeline: create project → generate tests → build → run → collect.
+        
+        Runs each screen's test individually with proper UserDefaults set via xcrun simctl
+        before each test. This ensures @AppStorage values are correctly read by the app.
+        """
         self.create_runner_project()
         self.generate_test_code(screens)
         self.build_runner(device_udid)
 
-        # Make sure app is installed first (caller should handle this)
-        self.run_tests(device_udid)
-
-        # Copy screenshots to final output directory
+        # Run each test individually with correct defaults
         out = Path(output_dir) / device_name
         out.mkdir(parents=True, exist_ok=True)
-
         results = []
-        for png in sorted(self.screenshots_dir.glob("*.png")):
-            dest = out / png.name
-            shutil.copy2(png, dest)
-            results.append(str(dest))
-            self.log(f"    ✅ {dest}")
 
+        for i, screen in enumerate(screens):
+            name = screen["name"]
+            safe_name = name.replace("-", "_").replace(" ", "_")
+            test_method = f"{RUNNER_TESTS}/ScreenshotTests/test_{i:03d}_{safe_name}"
+            defaults = screen.get("defaults", {})
+
+            self.log(f"    [{i+1}/{len(screens)}] {name}")
+
+            # Clear and set defaults for this screen
+            self.clear_simulator_defaults(device_udid)
+            self.set_simulator_defaults(device_udid, defaults)
+
+            # Terminate app if running (clean state)
+            self.run_cmd(
+                ["xcrun", "simctl", "terminate", device_udid, self.bundle_id],
+                check=False,
+            )
+
+            # Run just this one test
+            derived = self.runner_dir / "DerivedData"
+            xctestrun_files = list(derived.rglob("*.xctestrun"))
+            if not xctestrun_files:
+                raise RuntimeError("No .xctestrun file found after build")
+            xctestrun = xctestrun_files[0]
+
+            results_path = self.runner_dir / f"Results-{i}.xcresult"
+            cmd = [
+                "xcodebuild", "test-without-building",
+                "-xctestrun", str(xctestrun),
+                "-destination", f"id={device_udid}",
+                "-resultBundlePath", str(results_path),
+                "-only-testing", test_method,
+            ]
+            result = self.run_cmd(cmd, check=False)
+
+            # Check if screenshot was captured
+            screenshot = self.screenshots_dir / f"{name}.png"
+            if screenshot.exists():
+                dest = out / screenshot.name
+                shutil.copy2(screenshot, dest)
+                results.append(str(dest))
+                self.log(f"      ✅ {dest}")
+            else:
+                self.log(f"      ⚠️  No screenshot (test may have failed)")
+                if result.returncode != 0:
+                    self.debug(result.stderr[-500:] if result.stderr else "no stderr")
+
+        self.log(f"  📸 {len(results)}/{len(screens)} screenshots captured")
         return results
 
     def cleanup(self):

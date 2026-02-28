@@ -292,7 +292,7 @@ class AIAnalyzer:
         }).encode()
 
         req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.api_key}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={self.api_key}",
             data=data,
             headers={"Content-Type": "application/json"}
         )
