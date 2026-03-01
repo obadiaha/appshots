@@ -190,13 +190,13 @@ class HybridCapture:
         
         # Extract unique defaults states
         states = [{}]  # Always include empty state
-        seen_states = [frozenset()]
+        seen_keys = [str({})]
         for screen in screens:
             defaults = screen.get("defaults", {})
-            if defaults:
-                key = frozenset(defaults.items())
-                if key not in seen_states:
-                    seen_states.append(key)
+            if defaults and isinstance(defaults, dict):
+                key = str(sorted(defaults.items()))
+                if key not in seen_keys:
+                    seen_keys.append(key)
                     states.append(defaults)
 
         self.log(f"  📋 Found {len(screens)} screens, {len(states)} UserDefaults states")
